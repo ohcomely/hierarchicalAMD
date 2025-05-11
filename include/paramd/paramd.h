@@ -3,16 +3,24 @@
 #include <string>
 #include <vector>
 
-namespace paramd {
+namespace paramd
+{
   typedef int32_t vtype;
   typedef int32_t etype;
 
   // config used for paramd
-  struct config {
+  struct config
+  {
     double mult, lim, mem;
     uint64_t seed;
     bool breakdown, stat, sym;
-    
+
+    // New parameters for hierarchical decomposition
+    bool hierarchical;         // Enable hierarchical decomposition
+    vtype partition_threshold; // Threshold for partitioning
+    int max_recursion_depth;   // Maximum recursion depth
+    double balance_factor;     // Balance factor for partitioning (0.5 = balanced)
+
     // Default constructor for config
     config();
 
@@ -21,7 +29,8 @@ namespace paramd {
   };
 
   // matrix storage
-  struct matrix {
+  struct matrix
+  {
     vtype n;
     etype nnz;
     std::vector<etype> rowptr;
@@ -29,7 +38,7 @@ namespace paramd {
 
     // Construct a matrix from fp
     matrix(std::string fp);
-    
+
     // Apply iperm symmetrically to the matrix
     void apply_inverse_permutation(const std::vector<vtype> &iperm);
   };

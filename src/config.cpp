@@ -2,9 +2,11 @@
 #include <omp.h>
 #include "paramd/paramd.h"
 
-namespace paramd {
+namespace paramd
+{
   // Default constructor for config
-  config::config() {
+  config::config()
+  {
     mult = 1.1;
     lim = 8192;
     mem = 1.5;
@@ -12,10 +14,17 @@ namespace paramd {
     breakdown = false;
     stat = false;
     sym = false;
+
+    // Initialize new parameters with default values
+    hierarchical = false;
+    partition_threshold = 10000; // Default threshold
+    max_recursion_depth = 10;    // Default max recursion depth
+    balance_factor = 0.5;        // Default balance factor
   }
 
   // Print config
-  void config::print() const {
+  void config::print() const
+  {
     std::cout << "Multiplicative relaxation factor: " << mult << "\n";
     std::cout << "Limitation factor: " << lim << "\n";
     std::cout << "Extra memory factor: " << mem << "\n";
