@@ -82,9 +82,26 @@ endif()
 
 find_package(OpenMP REQUIRED)
 if(OpenMP_CXX_FOUND)
-  target_link_libraries(paramd_lib PRIVATE OpenMP::OpenMP_CXX)
-  target_link_libraries(paramd PRIVATE OpenMP::OpenMP_CXX)
+  target_link_libraries(paramd_lib PRIVATE -lmetis OpenMP::OpenMP_CXX)
+  target_link_libraries(paramd PRIVATE paramd_lib -lmetis OpenMP::OpenMP_CXX)
 endif()
+
+# Add to CMakeLists.txt
+find_package(METIS QUIET)
+
+if(METIS_FOUND)
+    include_directories(${METIS_INCLUDE_DIRS})
+    add_definitions(-DUSE_METIS)
+    set(METIS_LIBRARIES metis)
+    message(STATUS "METIS found: ${METIS_INCLUDE_DIRS}")
+else()
+    set(METIS_LIBRARIES "")
+    message(STATUS "METIS not found. Building without METIS support.")
+endif()
+
+# Update target_link_libraries
+target_link_libraries(paramd_lib PRIVATE ${METIS_LIBRARIES} OpenMP::OpenMP_CXX)
+target_link_libraries(paramd PRIVATE paramd_lib ${METIS_LIBRARIES} OpenMP::OpenMP_CXX)
 
 install(TARGETS paramd_lib
   LIBRARY DESTINATION lib

@@ -27,7 +27,9 @@ static void show_help()
             << "  --hierarchical                           Enable hierarchical decomposition (default: false)\n"
             << "  --partition-threshold <integer>          Threshold for matrix partitioning (default: 10000)\n"
             << "  --recursion-depth <integer>              Maximum recursion depth (default: 10)\n"
-            << "  --balance-factor <double>                Balance factor for partitioning (0.5 = balanced) (default: 0.5)\n";
+            << "  --balance-factor <double>                Balance factor for partitioning (0.5 = balanced) (default: 0.5)\n"
+            << "  --use-metis                             Use METIS for partitioning (default if available)\n"
+            << "  --no-metis                              Don't use METIS for partitioning\n";
 }
 
 int main(int argc, char *argv[])
@@ -101,6 +103,14 @@ int main(int argc, char *argv[])
     else if (arg == "--balance-factor" && i + 1 < argc)
     {
       config.balance_factor = std::stod(argv[++i]);
+    }
+    else if (arg == "--use-metis")
+    {
+      config.use_metis = true;
+    }
+    else if (arg == "--no-metis")
+    {
+      config.use_metis = false;
     }
     else
     {

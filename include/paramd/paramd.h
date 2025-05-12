@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <metis.h> // Include METIS header for partitioning
 
 namespace paramd
 {
@@ -11,15 +12,18 @@ namespace paramd
   // config used for paramd
   struct config
   {
+    // Existing fields
     double mult, lim, mem;
     uint64_t seed;
     bool breakdown, stat, sym;
+    bool hierarchical;
+    vtype partition_threshold;
+    int max_recursion_depth;
+    double balance_factor;
 
-    // New parameters for hierarchical decomposition
-    bool hierarchical;         // Enable hierarchical decomposition
-    vtype partition_threshold; // Threshold for partitioning
-    int max_recursion_depth;   // Maximum recursion depth
-    double balance_factor;     // Balance factor for partitioning (0.5 = balanced)
+    // New METIS-related fields
+    bool use_metis;                    // Whether to use METIS for partitioning
+    int metis_options[METIS_NOPTIONS]; // METIS options array
 
     // Default constructor for config
     config();

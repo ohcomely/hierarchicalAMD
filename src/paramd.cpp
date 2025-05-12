@@ -10,6 +10,7 @@
 #include <random>
 #include <vector>
 #include <queue>
+#include <metis.h>
 
 namespace paramd
 {
@@ -63,7 +64,7 @@ namespace paramd
   // Graph partitioning function
   void partition_graph(const vtype n, const vtype *rowptr, const etype *colidx,
                        std::vector<vtype> &part1_nodes, std::vector<vtype> &part2_nodes,
-                       std::vector<vtype> &separator_nodes, double balance_factor);
+                       std::vector<vtype> &separator_nodes, const config &config_param);
 
   // Function to combine orderings from subgraphs
   void combine_orderings(const vtype n, vtype *perm,
@@ -456,135 +457,251 @@ namespace paramd
 
   void partition_graph(const vtype n, const vtype *rowptr, const etype *colidx,
                        std::vector<vtype> &part1_nodes, std::vector<vtype> &part2_nodes,
-                       std::vector<vtype> &separator_nodes, double balance_factor)
+                       std::vector<vtype> &separator_nodes, const config &config_param)
   {
     // Clear output vectors
     part1_nodes.clear();
     part2_nodes.clear();
     separator_nodes.clear();
 
-    // Find a good starting node (pick a peripheral node)
-    vtype start_node = find_peripheral_node(n, rowptr, colidx);
-
-    // Run BFS from start_node
-    std::vector<vtype> level_set;
-    std::vector<vtype> node_level(n, -1);
-    std::vector<bool> visited(n, false);
-
-    std::queue<vtype> queue;
-    queue.push(start_node);
-    visited[start_node] = true;
-    node_level[start_node] = 0;
-
-    vtype max_level = 0;
-
-    while (!queue.empty())
+    // Check for empty graph or small graph
+    if (n <= 0 || rowptr == nullptr || colidx == nullptr || n <= 10)
     {
-      vtype node = queue.front();
-      queue.pop();
-
-      max_level = std::max(max_level, node_level[node]);
-
-      for (etype j = rowptr[node]; j < rowptr[node + 1]; j++)
-      {
-        vtype neighbor = colidx[j];
-        if (!visited[neighbor])
-        {
-          visited[neighbor] = true;
-          node_level[neighbor] = node_level[node] + 1;
-          queue.push(neighbor);
-        }
-      }
-    }
-
-    // Find split level based on balance factor
-    vtype target_size = static_cast<vtype>(n * balance_factor);
-    std::vector<vtype> level_sizes(max_level + 1, 0);
-
-    for (vtype i = 0; i < n; i++)
-    {
-      if (node_level[i] != -1)
-      {
-        level_sizes[node_level[i]]++;
-      }
-    }
-
-    vtype cumulative_size = 0;
-    vtype split_level = 0;
-
-    for (vtype level = 0; level <= max_level; level++)
-    {
-      cumulative_size += level_sizes[level];
-      if (cumulative_size >= target_size)
-      {
-        split_level = level;
-        break;
-      }
-    }
-
-    // Identify separator nodes (nodes at split_level with connections to split_level+1)
-    std::vector<bool> is_separator(n, false);
-
-    for (vtype i = 0; i < n; i++)
-    {
-      if (node_level[i] == split_level)
-      {
-        bool has_higher_neighbor = false;
-
-        for (etype j = rowptr[i]; j < rowptr[i + 1]; j++)
-        {
-          vtype neighbor = colidx[j];
-          if (node_level[neighbor] > split_level)
-          {
-            has_higher_neighbor = true;
-            break;
-          }
-        }
-
-        if (has_higher_neighbor)
-        {
-          is_separator[i] = true;
-        }
-      }
-    }
-
-    // Assign nodes to parts
-    for (vtype i = 0; i < n; i++)
-    {
-      if (node_level[i] == -1)
-      {
-        // Disconnected nodes go to part1
-        part1_nodes.push_back(i);
-      }
-      else if (is_separator[i])
-      {
-        separator_nodes.push_back(i);
-      }
-      else if (node_level[i] <= split_level)
-      {
-        part1_nodes.push_back(i);
-      }
-      else
-      {
-        part2_nodes.push_back(i);
-      }
-    }
-
-    // Return if partitioning is unsuccessful
-    if (part1_nodes.empty() || part2_nodes.empty())
-    {
-      // Clear outputs and put all nodes in part1
-      part1_nodes.clear();
-      part2_nodes.clear();
-      separator_nodes.clear();
-
+      // Put all nodes in part1 as fallback
       for (vtype i = 0; i < n; i++)
       {
         part1_nodes.push_back(i);
       }
+      return;
+    }
+
+// In your partition_graph function, replace the METIS_ComputeVertexSeparator call
+#ifdef USE_METIS
+    if (config_param.use_metis)
+    {
+      std::cout << "Debug: Using METIS for partitioning graph with n=" << n << std::endl;
+
+      // Convert CSR representation to METIS format
+      std::vector<idx_t> xadj(n + 1);
+      std::vector<idx_t> adjncy;
+
+      // Pre-allocate space for adjncy
+      size_t nnz = rowptr[n];
+      adjncy.reserve(nnz);
+
+      // Convert row pointers and indices to METIS format
+      xadj[0] = 0;
+      for (vtype i = 0; i < n; ++i)
+      {
+        for (etype j = rowptr[i]; j < rowptr[i + 1]; ++j)
+        {
+          vtype neighbor = colidx[j];
+          if (i != neighbor)
+          { // Skip self-loops
+            adjncy.push_back(neighbor);
+          }
+        }
+        xadj[i + 1] = adjncy.size();
+      }
+
+      // If graph is empty, fall back to simple partitioning
+      if (adjncy.empty())
+      {
+        std::cout << "Debug: Empty graph, using simple partitioning" << std::endl;
+        vtype mid = n / 2;
+        for (vtype i = 0; i < mid; i++)
+        {
+          part1_nodes.push_back(i);
+        }
+        for (vtype i = mid; i < n; i++)
+        {
+          part2_nodes.push_back(i);
+        }
+        return;
+      }
+
+      // OPTION 1: Use METIS_PartGraphKway - this divides into 2 parts without a separator
+      idx_t nvtxs = n;
+      idx_t nparts = 2; // We want two partitions
+      idx_t edgecut;
+      std::vector<idx_t> part(n);
+
+      // Call METIS_PartGraphKway
+      // Call METIS_PartGraphKway
+      idx_t ncon = 1; // Number of balancing constraints
+      int ret = METIS_PartGraphKway(
+          &nvtxs,                                          // Number of vertices
+          &ncon,                                           // Number of balancing constraints
+          xadj.data(),                                     // Row pointers
+          adjncy.data(),                                   // Column indices
+          nullptr,                                         // Vertex weights (nullptr = all 1)
+          nullptr,                                         // Vertex sizes (nullptr = all 1)
+          nullptr,                                         // Edge weights (nullptr = all 1)
+          &nparts,                                         // Number of parts (2)
+          nullptr,                                         // Target partition weights (nullptr = all equal)
+          nullptr,                                         // Allowed load imbalance (nullptr = 1.03)
+          const_cast<idx_t *>(config_param.metis_options), // Options
+          &edgecut,                                        // Output: edge-cut or communication volume
+          part.data()                                      // Output: partition vector
+      );
+
+      if (ret != METIS_OK)
+      {
+        std::cerr << "Error: METIS partitioning failed with code " << ret << std::endl;
+        // Fall back to simple partitioning
+        vtype mid = n / 2;
+        for (vtype i = 0; i < mid; i++)
+        {
+          part1_nodes.push_back(i);
+        }
+        for (vtype i = mid; i < n; i++)
+        {
+          part2_nodes.push_back(i);
+        }
+        return;
+      }
+
+      // METIS_PartGraphKway doesn't provide a separator, so we need to identify one.
+      // A simple approach: edges between different partitions form the separator
+      std::vector<bool> is_separator(n, false);
+
+      // Identify nodes that have neighbors in different partitions
+      for (vtype i = 0; i < n; i++)
+      {
+        if (is_separator[i])
+          continue; // Skip if already marked
+
+        bool has_diff_part_neighbor = false;
+        for (etype j = rowptr[i]; j < rowptr[i + 1]; j++)
+        {
+          vtype neighbor = colidx[j];
+          if (neighbor < n && part[i] != part[neighbor])
+          {
+            has_diff_part_neighbor = true;
+            break;
+          }
+        }
+
+        if (has_diff_part_neighbor)
+        {
+          is_separator[i] = true;
+        }
+      }
+
+      // Populate the part vectors based on the result
+      for (vtype i = 0; i < n; i++)
+      {
+        if (is_separator[i])
+        {
+          separator_nodes.push_back(i);
+        }
+        else if (part[i] == 0)
+        {
+          part1_nodes.push_back(i);
+        }
+        else
+        {
+          part2_nodes.push_back(i);
+        }
+      }
+
+      // If separator is too large or empty, create a simple one
+      if (separator_nodes.size() > n * 0.3 || separator_nodes.empty())
+      {
+        // Sort nodes by their partition and degree
+        std::vector<std::pair<idx_t, vtype>> sorted_nodes;
+        for (vtype i = 0; i < n; i++)
+        {
+          if (!is_separator[i])
+            continue;
+
+          // Count neighbors in each partition
+          int count_diff_part = 0;
+          for (etype j = rowptr[i]; j < rowptr[i + 1]; j++)
+          {
+            vtype neighbor = colidx[j];
+            if (neighbor < n && part[i] != part[neighbor])
+            {
+              count_diff_part++;
+            }
+          }
+
+          sorted_nodes.emplace_back(count_diff_part, i);
+        }
+
+        // Sort by decreasing order of cross-edges
+        std::sort(sorted_nodes.begin(), sorted_nodes.end(),
+                  [](const auto &a, const auto &b)
+                  { return a.first > b.first; });
+
+        // Take top 10% as separator
+        size_t sep_size = std::max(size_t(1), size_t(n * 0.1));
+        sep_size = std::min(sep_size, sorted_nodes.size());
+
+        part1_nodes.clear();
+        part2_nodes.clear();
+        separator_nodes.clear();
+
+        // First assign the separator
+        for (size_t i = 0; i < sep_size; i++)
+        {
+          separator_nodes.push_back(sorted_nodes[i].second);
+          is_separator[sorted_nodes[i].second] = true;
+        }
+
+        // Then assign remaining nodes to parts
+        for (vtype i = 0; i < n; i++)
+        {
+          if (!is_separator[i])
+          {
+            if (part[i] == 0)
+            {
+              part1_nodes.push_back(i);
+            }
+            else
+            {
+              part2_nodes.push_back(i);
+            }
+          }
+        }
+      }
+
+      std::cout << "Debug: METIS partitioning: part1=" << part1_nodes.size()
+                << ", part2=" << part2_nodes.size()
+                << ", separator=" << separator_nodes.size() << std::endl;
+
+      return;
+    }
+#endif
+
+    // Fall back to simple partitioning if METIS is not available or not used
+    std::cout << "Debug: Using simple partitioning (METIS not available or disabled)" << std::endl;
+
+    // Your existing simple partitioning code
+    vtype mid = n / 2;
+    vtype separator_size = std::max(1, static_cast<vtype>(n * 0.1)); // 10% as separator
+
+    // First part
+    for (vtype i = 0; i < mid - separator_size / 2; i++)
+    {
+      part1_nodes.push_back(i);
+    }
+
+    // Separator
+    for (vtype i = mid - separator_size / 2; i < mid + separator_size / 2; i++)
+    {
+      if (i < n)
+      {
+        separator_nodes.push_back(i);
+      }
+    }
+
+    // Second part
+    for (vtype i = mid + separator_size / 2; i < n; i++)
+    {
+      part2_nodes.push_back(i);
     }
   }
-
   // Find a peripheral node using a double BFS
   vtype find_peripheral_node(const vtype n, const vtype *rowptr, const etype *colidx)
   {
@@ -1521,7 +1638,7 @@ namespace paramd
 
     // Step 1: Partition the graph
     std::vector<vtype> part1_nodes, part2_nodes, separator_nodes;
-    partition_graph(n, rowptr, colidx, part1_nodes, part2_nodes, separator_nodes, config_p.balance_factor);
+    partition_graph(n, rowptr, colidx, part1_nodes, part2_nodes, separator_nodes, config_p);
 
     // If partitioning failed or produced unbalanced partitions, fall back to standard algorithm
     if (part1_nodes.empty() || part2_nodes.empty() ||

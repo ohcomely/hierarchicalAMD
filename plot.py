@@ -43,6 +43,13 @@ def visualize_with_permutation(mtx_file, perm_file, output_file=None, calc_filli
         print("Applying permutation...")
         permuted_matrix = original_matrix[perm, :][:, perm]
         
+        # Save the permuted matrix to a file
+        permuted_mtx_file = mtx_file.replace('.mtx', '_permuted.mtx')
+        print(f"Saving permuted matrix to {permuted_mtx_file}...")
+        from scipy.io import mmwrite
+        mmwrite(permuted_mtx_file, permuted_matrix)
+        print(f"Permuted matrix saved to {permuted_mtx_file}")
+
         # Create figure with larger size
         plt.figure(figsize=(16, 8))
         
